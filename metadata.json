@@ -1,0 +1,5 @@
+{
+  "name": "VisionPrompt AI",
+  "description": "An advanced image-to-prompt generator that uses Gemini's vision capabilities to extract accurate, detailed artistic prompts from any uploaded image.",
+  "requestFramePermissions": []
+}
