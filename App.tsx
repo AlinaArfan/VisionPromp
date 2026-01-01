@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Upload, X, Copy, Check, Loader2, Wand2, Image as ImageIcon, AlertCircle, Sparkles, Download, RefreshCw, LayoutTemplate, Edit3, RotateCcw, Package, Zap, ScanSearch, ShieldCheck, Link as LinkIcon, Key } from 'lucide-react';
+import { Upload, X, Copy, Check, Loader2, Wand2, Image as ImageIcon, AlertCircle, Sparkles, Download, RefreshCw, LayoutTemplate, Edit3, RotateCcw, Package, Zap, ScanSearch, ShieldCheck, Link as LinkIcon, Key, ExternalLink } from 'lucide-react';
 import Header from './components/Header';
 import { analyzeImageToPrompt, generateImageFromPrompt, detectProductFromImage } from './services/geminiService';
 import { AnalysisState, PromptAnalysis } from './types';
@@ -20,6 +20,7 @@ const App: React.FC = () => {
 
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("1:1");
   const [editedPrompt, setEditedPrompt] = useState<string>("");
+  const [hasKey, setHasKey] = useState<boolean>(true);
   const [analysis, setAnalysis] = useState<AnalysisState>({
     isLoading: false,
     error: null,
@@ -38,10 +39,33 @@ const App: React.FC = () => {
 
   const [copied, setCopied] = useState(false);
 
+  // Check API Key on mount
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio?.hasSelectedApiKey) {
+        const isSelected = await window.aistudio.hasSelectedApiKey();
+        setHasKey(isSelected);
+      }
+    };
+    checkKey();
+  }, []);
+
   const handleKeySelect = async () => {
     if (window.aistudio?.openSelectKey) {
       await window.aistudio.openSelectKey();
+      setHasKey(true);
     }
+  };
+
+  const ensureKey = async (): Promise<boolean> => {
+    if (window.aistudio?.hasSelectedApiKey) {
+      const isSelected = await window.aistudio.hasSelectedApiKey();
+      if (!isSelected) {
+        await handleKeySelect();
+        return true; // Proceed anyway as per guidelines (mitigate race condition)
+      }
+    }
+    return true;
   };
 
   const processSceneFile = useCallback((file: File) => {
@@ -55,22 +79,6 @@ const App: React.FC = () => {
     setAnalysis({ isLoading: false, error: null, result: null });
     setGeneratedImage({ url: null, isLoading: false, error: null });
   }, [previewUrl]);
-
-  useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf("image") !== -1) {
-          const file = items[i].getAsFile();
-          if (file) processSceneFile(file);
-          break;
-        }
-      }
-    };
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [processSceneFile]);
 
   const handleUrlSubmit = async () => {
     if (!urlInput.trim()) return;
@@ -111,6 +119,8 @@ const App: React.FC = () => {
 
   const handleAnalyze = async () => {
     if (!selectedFile) return;
+    await ensureKey();
+    
     setAnalysis({ isLoading: true, error: null, result: null });
     setGeneratedImage({ url: null, isLoading: false, error: null });
 
@@ -131,6 +141,7 @@ const App: React.FC = () => {
   const handleGenerateImage = async () => {
     const promptToUse = editedPrompt || analysis.result?.mainPrompt;
     if (!promptToUse) return;
+    await ensureKey();
     
     setGeneratedImage(prev => ({ ...prev, isLoading: true, error: null }));
     
@@ -160,18 +171,39 @@ const App: React.FC = () => {
     <div className="min-h-screen pb-20 bg-slate-950 text-slate-100">
       <Header />
       
-      {/* API Key Banner for Vercel users */}
-      <div className="bg-indigo-600/10 border-b border-indigo-500/20 py-2">
-        <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-4 text-[10px] font-medium text-indigo-300">
-          <span>Public Deployment: Bring your own Gemini API Key if prompted</span>
-          <button onClick={handleKeySelect} className="flex items-center gap-1 bg-indigo-500/20 px-2 py-0.5 rounded-full border border-indigo-500/30 hover:bg-indigo-500/30 transition-all">
-            <Key className="w-3 h-3" /> Select Key
-          </button>
+      {/* API Key Banner */}
+      <div className={`bg-indigo-600/10 border-b border-indigo-500/20 py-3 transition-all ${!hasKey ? 'bg-amber-500/10 border-amber-500/30' : ''}`}>
+        <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[11px] font-medium">
+          <div className="flex items-center gap-2 text-indigo-300">
+            <Key className={`w-3.5 h-3.5 ${!hasKey ? 'text-amber-400 animate-pulse' : ''}`} />
+            <span>{hasKey ? "API Key is connected" : "Gemini 3 Pro requires a Paid API Key (GCP Project with Billing)"}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={handleKeySelect} 
+              className={`flex items-center gap-1 px-3 py-1 rounded-full border transition-all ${
+                !hasKey 
+                ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-[0_0_15px_rgba(245,158,11,0.3)] hover:scale-105' 
+                : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/30'
+              }`}
+            >
+              {hasKey ? "Change API Key" : "Select API Key Now"}
+            </button>
+            <a 
+              href="https://ai.google.dev/gemini-api/docs/billing" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-colors"
+            >
+              Billing Docs <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
         </div>
       </div>
 
       <main className="max-w-7xl mx-auto px-4 mt-8 grid grid-cols-1 lg:grid-cols-12 gap-10">
         <section className="lg:col-span-5 space-y-6">
+          {/* Scene Input */}
           <div 
             className={`bg-slate-900/50 p-6 rounded-3xl border transition-all duration-300 shadow-xl backdrop-blur-sm ${
               isDraggingScene ? 'border-indigo-500 bg-indigo-500/10 scale-[1.02]' : 'border-slate-800'
@@ -224,6 +256,7 @@ const App: React.FC = () => {
             )}
           </div>
 
+          {/* Product Input */}
           <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-sm">
             <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2 mb-4">
               <Package className="w-4 h-4 text-emerald-400" />
@@ -252,15 +285,17 @@ const App: React.FC = () => {
             />
           </div>
 
+          {/* Main Action */}
           <button
             onClick={handleAnalyze}
             disabled={!selectedFile || analysis.isLoading}
-            className="w-full py-5 rounded-2xl font-bold flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-800 disabled:text-slate-500 transition-all shadow-xl"
+            className="w-full py-5 rounded-2xl font-bold flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-800 disabled:text-slate-500 transition-all shadow-xl active:scale-[0.98]"
           >
             {analysis.isLoading ? <Loader2 className="animate-spin" /> : <Wand2 />}
             Build Synthesis Prompt
           </button>
 
+          {/* Error Feedback */}
           {analysis.error && (
             <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
               <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
@@ -268,13 +303,16 @@ const App: React.FC = () => {
                 <p className="text-xs font-bold text-red-400">Analysis Failed</p>
                 <p className="text-[10px] text-red-300/80 leading-relaxed">{analysis.error}</p>
                 {analysis.error.includes("Key") && (
-                  <button onClick={handleKeySelect} className="text-[10px] underline font-bold text-red-400">Select API Key</button>
+                  <button onClick={handleKeySelect} className="mt-2 flex items-center gap-2 px-3 py-1 bg-red-500 text-white text-[10px] rounded-lg font-bold hover:bg-red-400 transition-colors">
+                    <Key className="w-3 h-3" /> Select API Key Now
+                  </button>
                 )}
               </div>
             </div>
           )}
         </section>
 
+        {/* Studio Section */}
         <section className="lg:col-span-7 space-y-6">
           <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 min-h-[500px] flex flex-col">
             <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
@@ -315,7 +353,7 @@ const App: React.FC = () => {
                 {!generatedImage.url && !generatedImage.isLoading ? (
                   <button
                     onClick={handleGenerateImage}
-                    className="w-full py-5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-3xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-500/20 transition-all shadow-lg"
+                    className="w-full py-5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-3xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-500/20 transition-all shadow-lg active:scale-[0.98]"
                   >
                     <Zap className="w-4 h-4" /> Synthesize Reality
                   </button>
