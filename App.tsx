@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Upload, X, Copy, Check, Loader2, Wand2, Image as ImageIcon, AlertCircle, Sparkles, Download, RefreshCw, LayoutTemplate, Edit3, RotateCcw, Package, Zap, ScanSearch, ShieldCheck, Link as LinkIcon, Key, ExternalLink } from 'lucide-react';
+import { Upload, X, Copy, Check, Loader2, Wand2, Image as ImageIcon, AlertCircle, Sparkles, Download, RefreshCw, LayoutTemplate, Edit3, RotateCcw, Package, Zap, ScanSearch, ShieldCheck, Link as LinkIcon, Key, ExternalLink, Info } from 'lucide-react';
 import Header from './components/Header';
 import { analyzeImageToPrompt, generateImageFromPrompt, detectProductFromImage } from './services/geminiService';
 import { AnalysisState, PromptAnalysis } from './types';
@@ -20,7 +20,8 @@ const App: React.FC = () => {
 
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("1:1");
   const [editedPrompt, setEditedPrompt] = useState<string>("");
-  const [hasKey, setHasKey] = useState<boolean>(true);
+  const [hasKey, setHasKey] = useState<boolean>(false);
+  
   const [analysis, setAnalysis] = useState<AnalysisState>({
     isLoading: false,
     error: null,
@@ -39,38 +40,32 @@ const App: React.FC = () => {
 
   const [copied, setCopied] = useState(false);
 
-  // Check API Key on mount
+  const checkKeyStatus = async () => {
+    if (window.aistudio?.hasSelectedApiKey) {
+      const isSelected = await window.aistudio.hasSelectedApiKey();
+      setHasKey(isSelected);
+      return isSelected;
+    }
+    return false;
+  };
+
   useEffect(() => {
-    const checkKey = async () => {
-      if (window.aistudio?.hasSelectedApiKey) {
-        const isSelected = await window.aistudio.hasSelectedApiKey();
-        setHasKey(isSelected);
-      }
-    };
-    checkKey();
+    checkKeyStatus();
+    // Cek berkala jika variabel lingkungan berubah
+    const interval = setInterval(checkKeyStatus, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleKeySelect = async () => {
     if (window.aistudio?.openSelectKey) {
       await window.aistudio.openSelectKey();
-      setHasKey(true);
+      await checkKeyStatus();
     }
-  };
-
-  const ensureKey = async (): Promise<boolean> => {
-    if (window.aistudio?.hasSelectedApiKey) {
-      const isSelected = await window.aistudio.hasSelectedApiKey();
-      if (!isSelected) {
-        await handleKeySelect();
-        return true; // Proceed anyway as per guidelines (mitigate race condition)
-      }
-    }
-    return true;
   };
 
   const processSceneFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
-      setAnalysis(prev => ({ ...prev, error: "Please upload a valid image file." }));
+      setAnalysis(prev => ({ ...prev, error: "Harap unggah file gambar yang valid." }));
       return;
     }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -91,7 +86,7 @@ const App: React.FC = () => {
       processSceneFile(file);
       setUrlInput("");
     } catch (err) {
-      setAnalysis(prev => ({ ...prev, isLoading: false, error: "CORS error: Image URL could not be fetched. Try uploading manually." }));
+      setAnalysis(prev => ({ ...prev, isLoading: false, error: "Gagal mengambil gambar dari URL. Coba unggah manual." }));
     }
   };
 
@@ -119,8 +114,14 @@ const App: React.FC = () => {
 
   const handleAnalyze = async () => {
     if (!selectedFile) return;
-    await ensureKey();
     
+    // Cek key sebelum lanjut
+    const isKeyReady = await checkKeyStatus();
+    if (!isKeyReady || !process.env.API_KEY) {
+      await handleKeySelect();
+      return;
+    }
+
     setAnalysis({ isLoading: true, error: null, result: null });
     setGeneratedImage({ url: null, isLoading: false, error: null });
 
@@ -132,7 +133,7 @@ const App: React.FC = () => {
         setAnalysis({ isLoading: false, error: null, result });
         setEditedPrompt(result.mainPrompt);
       } catch (err: any) {
-        setAnalysis({ isLoading: false, error: err.message || "Failed to analyze image.", result: null });
+        setAnalysis({ isLoading: false, error: err.message || "Gagal menganalisis gambar.", result: null });
       }
     };
     reader.readAsDataURL(selectedFile);
@@ -141,7 +142,12 @@ const App: React.FC = () => {
   const handleGenerateImage = async () => {
     const promptToUse = editedPrompt || analysis.result?.mainPrompt;
     if (!promptToUse) return;
-    await ensureKey();
+
+    const isKeyReady = await checkKeyStatus();
+    if (!isKeyReady || !process.env.API_KEY) {
+      await handleKeySelect();
+      return;
+    }
     
     setGeneratedImage(prev => ({ ...prev, isLoading: true, error: null }));
     
@@ -163,7 +169,7 @@ const App: React.FC = () => {
       const imageUrl = await generateImageFromPrompt(promptToUse, selectedRatio, productImageData);
       setGeneratedImage({ url: imageUrl, isLoading: false, error: null });
     } catch (err: any) {
-      setGeneratedImage({ url: null, isLoading: false, error: err.message || "Generation failed." });
+      setGeneratedImage({ url: null, isLoading: false, error: err.message || "Gagal membuat gambar." });
     }
   };
 
@@ -171,39 +177,48 @@ const App: React.FC = () => {
     <div className="min-h-screen pb-20 bg-slate-950 text-slate-100">
       <Header />
       
-      {/* API Key Banner */}
-      <div className={`bg-indigo-600/10 border-b border-indigo-500/20 py-3 transition-all ${!hasKey ? 'bg-amber-500/10 border-amber-500/30' : ''}`}>
-        <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[11px] font-medium">
-          <div className="flex items-center gap-2 text-indigo-300">
-            <Key className={`w-3.5 h-3.5 ${!hasKey ? 'text-amber-400 animate-pulse' : ''}`} />
-            <span>{hasKey ? "API Key is connected" : "Gemini 3 Pro requires a Paid API Key (GCP Project with Billing)"}</span>
-          </div>
+      {/* API Key Status Banner */}
+      <div className={`border-b transition-all duration-500 py-3 ${
+        hasKey ? 'bg-indigo-600/10 border-indigo-500/20' : 'bg-rose-500/10 border-rose-500/30'
+      }`}>
+        <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-4 text-[11px]">
           <div className="flex items-center gap-3">
+            <div className={`p-1.5 rounded-full ${hasKey ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
+              <Key className={`w-3.5 h-3.5 ${hasKey ? 'text-emerald-400' : 'text-rose-400 animate-pulse'}`} />
+            </div>
+            <div>
+              <p className={`font-bold ${hasKey ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {hasKey ? "API Key Terkoneksi" : "API Key Diperlukan"}
+              </p>
+              <p className="text-slate-500 text-[10px]">Model Gemini 3 Pro membutuhkan Key dari Project GCP Berbayar</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {!hasKey && (
+              <div className="hidden sm:flex items-center gap-2 text-amber-400 bg-amber-400/10 px-3 py-1 rounded-lg border border-amber-400/20">
+                <Info className="w-3 h-3" />
+                <span>Pilih Key untuk mengaktifkan fitur</span>
+              </div>
+            )}
             <button 
               onClick={handleKeySelect} 
-              className={`flex items-center gap-1 px-3 py-1 rounded-full border transition-all ${
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-full border font-bold transition-all ${
                 !hasKey 
-                ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-[0_0_15px_rgba(245,158,11,0.3)] hover:scale-105' 
-                : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/30'
+                ? 'bg-rose-500 text-white border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.3)] hover:scale-105 active:scale-95' 
+                : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/40'
               }`}
             >
-              {hasKey ? "Change API Key" : "Select API Key Now"}
+              <Key className="w-3.5 h-3.5" />
+              {hasKey ? "Ganti API Key" : "Klik untuk Input API Key"}
             </button>
-            <a 
-              href="https://ai.google.dev/gemini-api/docs/billing" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-colors"
-            >
-              Billing Docs <ExternalLink className="w-3 h-3" />
-            </a>
           </div>
         </div>
       </div>
 
       <main className="max-w-7xl mx-auto px-4 mt-8 grid grid-cols-1 lg:grid-cols-12 gap-10">
         <section className="lg:col-span-5 space-y-6">
-          {/* Scene Input */}
+          {/* Reference Scene */}
           <div 
             className={`bg-slate-900/50 p-6 rounded-3xl border transition-all duration-300 shadow-xl backdrop-blur-sm ${
               isDraggingScene ? 'border-indigo-500 bg-indigo-500/10 scale-[1.02]' : 'border-slate-800'
@@ -228,7 +243,7 @@ const App: React.FC = () => {
               <div className="space-y-4">
                 <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-slate-700 rounded-2xl cursor-pointer hover:bg-slate-800/50 transition-all group">
                   <Upload className="w-8 h-8 text-indigo-500/50 group-hover:scale-110 transition-transform mb-3" />
-                  <p className="text-xs text-slate-500">Drop backdrop or style image</p>
+                  <p className="text-xs text-slate-500">Tarik gambar background ke sini</p>
                   <input type="file" className="hidden" accept="image/*" onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) processSceneFile(file);
@@ -237,26 +252,26 @@ const App: React.FC = () => {
                 <div className="flex gap-2">
                   <input 
                     type="text"
-                    placeholder="Paste image link..."
+                    placeholder="Tempel link gambar..."
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
                     className="flex-1 bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-200 outline-none focus:ring-1 focus:ring-indigo-500/50"
                   />
-                  <button onClick={handleUrlSubmit} className="px-4 bg-slate-800 rounded-xl text-xs font-bold">Fetch</button>
+                  <button onClick={handleUrlSubmit} className="px-4 bg-slate-800 rounded-xl text-xs font-bold">Ambil</button>
                 </div>
               </div>
             ) : (
               <div className="relative group rounded-2xl overflow-hidden border border-slate-700 h-64">
                 <img src={previewUrl} className="w-full h-full object-cover" alt="Source" />
-                <button onClick={() => { setPreviewUrl(null); setSelectedFile(null); }} className="absolute top-2 right-2 p-1.5 bg-red-500 rounded-full text-white">
+                <button onClick={() => { setPreviewUrl(null); setSelectedFile(null); }} className="absolute top-2 right-2 p-1.5 bg-rose-500 rounded-full text-white">
                   <X className="w-4 h-4" />
                 </button>
               </div>
             )}
           </div>
 
-          {/* Product Input */}
+          {/* Targeted Product */}
           <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-sm">
             <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2 mb-4">
               <Package className="w-4 h-4 text-emerald-400" />
@@ -265,13 +280,13 @@ const App: React.FC = () => {
             {!productPreviewUrl ? (
               <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-slate-700 rounded-2xl cursor-pointer hover:bg-slate-800/50 transition-all group">
                 <ScanSearch className="w-6 h-6 text-emerald-500/50 group-hover:scale-110 transition-transform mb-2" />
-                <p className="text-xs text-slate-500">Upload item for synthesis</p>
+                <p className="text-xs text-slate-500">Unggah produk untuk disatukan</p>
                 <input type="file" className="hidden" accept="image/*" onChange={(e) => processProductFile(e.target.files?.[0] as File)} />
               </label>
             ) : (
               <div className="relative group rounded-2xl overflow-hidden border border-slate-700 h-40">
                 <img src={productPreviewUrl} className="w-full h-full object-cover" alt="Product" />
-                <button onClick={() => { setProductPreviewUrl(null); setProductFile(null); }} className="absolute top-2 right-2 p-1.5 bg-red-500 rounded-full text-white">
+                <button onClick={() => { setProductPreviewUrl(null); setProductFile(null); }} className="absolute top-2 right-2 p-1.5 bg-rose-500 rounded-full text-white">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -280,39 +295,46 @@ const App: React.FC = () => {
               type="text"
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
-              placeholder="Auto-detecting product name..."
+              placeholder="Mendeteksi nama produk..."
               className="mt-4 w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-200 outline-none"
             />
           </div>
 
-          {/* Main Action */}
+          {/* Action Button */}
           <button
             onClick={handleAnalyze}
             disabled={!selectedFile || analysis.isLoading}
-            className="w-full py-5 rounded-2xl font-bold flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-800 disabled:text-slate-500 transition-all shadow-xl active:scale-[0.98]"
+            className={`w-full py-5 rounded-2xl font-bold flex items-center justify-center gap-3 transition-all shadow-xl active:scale-[0.98] ${
+              !hasKey ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+            }`}
           >
             {analysis.isLoading ? <Loader2 className="animate-spin" /> : <Wand2 />}
-            Build Synthesis Prompt
+            {hasKey ? "Build Synthesis Prompt" : "Input API Key Dahulu"}
           </button>
 
-          {/* Error Feedback */}
+          {/* Help/Error Box */}
           {analysis.error && (
-            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
-              <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-              <div className="space-y-1">
-                <p className="text-xs font-bold text-red-400">Analysis Failed</p>
-                <p className="text-[10px] text-red-300/80 leading-relaxed">{analysis.error}</p>
-                {analysis.error.includes("Key") && (
-                  <button onClick={handleKeySelect} className="mt-2 flex items-center gap-2 px-3 py-1 bg-red-500 text-white text-[10px] rounded-lg font-bold hover:bg-red-400 transition-colors">
-                    <Key className="w-3 h-3" /> Select API Key Now
-                  </button>
-                )}
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl space-y-3 animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-rose-400">Terjadi Kesalahan</p>
+                  <p className="text-[10px] text-rose-300/80 leading-relaxed">{analysis.error}</p>
+                </div>
+              </div>
+              <div className="pt-2 border-t border-rose-500/10 flex gap-2">
+                 <button onClick={handleKeySelect} className="flex-1 py-1.5 bg-rose-500 text-white text-[10px] rounded-lg font-bold hover:bg-rose-400 transition-colors flex items-center justify-center gap-2">
+                   <RotateCcw className="w-3 h-3" /> Input Ulang Key
+                 </button>
+                 <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="flex-1 py-1.5 bg-slate-800 text-slate-300 text-[10px] rounded-lg font-bold hover:bg-slate-700 transition-colors flex items-center justify-center gap-2">
+                   <ExternalLink className="w-3 h-3" /> Cek Billing
+                 </a>
               </div>
             </div>
           )}
         </section>
 
-        {/* Studio Section */}
+        {/* Studio Canvas */}
         <section className="lg:col-span-7 space-y-6">
           <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 min-h-[500px] flex flex-col">
             <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
@@ -326,7 +348,7 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-center mb-4">
                     <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Calculated Prompt</span>
                     <button onClick={() => { navigator.clipboard.writeText(editedPrompt); setCopied(true); setTimeout(()=>setCopied(false), 2000); }} className="text-[10px] bg-slate-700 px-3 py-1 rounded-full border border-slate-600">
-                      {copied ? 'Copied!' : 'Copy Prompt'}
+                      {copied ? 'Tersalin!' : 'Salin Prompt'}
                     </button>
                   </div>
                   <textarea 
@@ -370,20 +392,20 @@ const App: React.FC = () => {
                   <div className="space-y-4 animate-in zoom-in-95 duration-500">
                     <div className="flex justify-between items-center px-2">
                       <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
-                        <Check className="w-3 h-3" /> Result Ready
+                        <Check className="w-3 h-3" /> Gambar Selesai
                       </span>
                       <div className="flex gap-2">
                         <button onClick={handleGenerateImage} className="text-[10px] bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-slate-200 font-bold flex items-center gap-2 border border-slate-700 transition-all">
-                          <RefreshCw className="w-3 h-3" /> Regenerate
+                          <RefreshCw className="w-3 h-3" /> Buat Ulang
                         </button>
                         <button onClick={() => { const link = document.createElement('a'); link.href = generatedImage.url as string; link.download = `art-${Date.now()}.png`; link.click(); }} className="text-[10px] bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-xl text-white font-bold flex items-center gap-2 transition-all">
-                          <Download className="w-3 h-3" /> Download
+                          <Download className="w-3 h-3" /> Unduh
                         </button>
                       </div>
                     </div>
                     
                     {generatedImage.error && (
-                      <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] text-red-400">
+                      <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400">
                         {generatedImage.error}
                       </div>
                     )}
@@ -402,7 +424,7 @@ const App: React.FC = () => {
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-slate-600 space-y-4">
                 <Wand2 className="w-12 h-12 opacity-10" />
-                <p className="text-sm">Upload scene and product to begin</p>
+                <p className="text-sm">Unggah scene dan produk untuk memulai</p>
               </div>
             )}
           </div>

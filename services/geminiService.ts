@@ -6,10 +6,17 @@ const sanitizeJson = (text: string): string => {
   return text.replace(/```json\n?|```/g, "").trim();
 };
 
+const getAiInstance = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey.trim() === "") {
+    throw new Error("API Key belum terdeteksi. Silakan klik tombol 'Select API Key' di atas.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
 export const detectProductFromImage = async (base64Image: string, mimeType: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
   try {
+    const ai = getAiInstance();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: {
@@ -32,20 +39,20 @@ export const analyzeImageToPrompt = async (
   mimeType: string, 
   productName?: string
 ): Promise<PromptAnalysis> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
   const systemInstruction = `You are a professional AI Prompt Engineer and Commercial Photographer. 
 Analyze the uploaded image to extract its artistic style, lighting, and composition. 
 Describe a high-end commercial photography setting where the product '${productName || 'a product'}' can be naturally placed.
 The prompt must focus on the environment, textures, and lighting.`;
 
   try {
+    const ai = getAiInstance();
+    // Gunakan Pro untuk kualitas terbaik, jika gagal user mungkin butuh key baru
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: {
         parts: [
           { inlineData: { mimeType, data: base64Image } },
-          { text: `Analyze this scene. Create a detailed prompt for a ${productName || 'product'} photoshoot in this exact style and environment.` }
+          { text: `Analyze this scene. Create a detailed prompt for a ${productName || 'product'} photoshoot in this style.` }
         ]
       },
       config: {
@@ -54,7 +61,7 @@ The prompt must focus on the environment, textures, and lighting.`;
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            mainPrompt: { type: Type.STRING, description: "Detailed prompt for the full scene." },
+            mainPrompt: { type: Type.STRING },
             subject: { type: Type.STRING },
             style: { type: Type.STRING },
             lighting: { type: Type.STRING },
@@ -71,10 +78,10 @@ The prompt must focus on the environment, textures, and lighting.`;
     return JSON.parse(cleanJson) as PromptAnalysis;
   } catch (error: any) {
     console.error("Analysis API Error:", error);
-    if (error.message?.includes("entity was not found")) {
-      throw new Error("API Key configuration error. Please re-select your API key.");
+    if (error.message?.includes("entity was not found") || error.message?.includes("API Key")) {
+      throw new Error("Model atau API Key tidak valid. Pastikan Anda menggunakan API Key dari project GCP yang sudah mengaktifkan billing.");
     }
-    throw new Error(error.message || "Failed to analyze image.");
+    throw new Error(error.message || "Gagal menganalisis gambar.");
   }
 };
 
@@ -83,29 +90,26 @@ export const generateImageFromPrompt = async (
   aspectRatio: "1:1" | "3:4" | "4:3" | "9:16" | "16:9" = "1:1",
   productImage?: { data: string, mimeType: string }
 ): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  const contentsParts: any[] = [];
-  
-  if (productImage) {
-    contentsParts.push({
-      inlineData: {
-        data: productImage.data,
-        mimeType: productImage.mimeType
-      }
-    });
-    contentsParts.push({
-      text: `TASK: Place the product from the reference image into this scene: ${prompt}.
-      MANDATORY: Preserve 100% of the product's identity, logos, and shape. 
-      Professional 8k commercial photography, realistic lighting integration, photorealistic.`
-    });
-  } else {
-    contentsParts.push({
-      text: `Professional high-end commercial photography of: ${prompt}. Cinematic lighting, 8k resolution, photorealistic.`
-    });
-  }
-
   try {
+    const ai = getAiInstance();
+    const contentsParts: any[] = [];
+    
+    if (productImage) {
+      contentsParts.push({
+        inlineData: {
+          data: productImage.data,
+          mimeType: productImage.mimeType
+        }
+      });
+      contentsParts.push({
+        text: `Place the product from the image into this scene: ${prompt}. Preserve product identity perfectly. 8k photorealistic.`
+      });
+    } else {
+      contentsParts.push({
+        text: `Professional photography: ${prompt}. Cinematic lighting, 8k.`
+      });
+    }
+
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-image-preview',
       contents: { parts: contentsParts },
@@ -122,9 +126,9 @@ export const generateImageFromPrompt = async (
         return `data:image/png;base64,${part.inlineData.data}`;
       }
     }
-    throw new Error("No image data received from AI.");
+    throw new Error("AI tidak mengirimkan data gambar.");
   } catch (error: any) {
     console.error("Generation API Error:", error);
-    throw new Error(error.message || "Image generation failed.");
+    throw new Error(error.message || "Gagal membuat gambar.");
   }
 };
