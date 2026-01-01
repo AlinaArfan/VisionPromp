@@ -2,27 +2,29 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { PromptAnalysis } from "../types";
 
+const sanitizeJson = (text: string): string => {
+  return text.replace(/```json\n?|```/g, "").trim();
+};
+
 export const detectProductFromImage = async (base64Image: string, mimeType: string): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: {
-      parts: [
-        {
-          inlineData: { mimeType, data: base64Image }
-        },
-        {
-          text: "Identify the main product or central object in this image. Provide only the specific name/model/brand (e.g., 'Sony WH-1000XM4 Headphones'). If no clear product is found, return 'Product'. Be very concise, maximum 5 words."
-        }
-      ]
-    },
-    config: {
-      temperature: 0.1,
-    }
-  });
-
-  return response.text?.trim() || "Product";
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          { inlineData: { mimeType, data: base64Image } },
+          { text: "Identify the main product or central object in this image. Provide only the specific name/model/brand. If no clear product is found, return 'Product'. Be very concise, maximum 5 words." }
+        ]
+      },
+      config: { temperature: 0.1 }
+    });
+    return response.text?.trim() || "Product";
+  } catch (err) {
+    console.error("Detection error:", err);
+    return "Product";
+  }
 };
 
 export const analyzeImageToPrompt = async (
@@ -32,43 +34,47 @@ export const analyzeImageToPrompt = async (
 ): Promise<PromptAnalysis> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-  const systemInstruction = `You are a professional AI Prompt Engineer and Photographer. 
-Analyze the uploaded scene image to extract its artistic style, lighting, and composition environment. 
-The goal is to describe a setting where a product can be placed.
-
-Return the response as a valid JSON object.`;
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: {
-      parts: [
-        { inlineData: { mimeType, data: base64Image } },
-        { text: `Analyze this scene's lighting, mood, and background details. Create a prompt for a ${productName || 'product'} photoshoot in this exact environment.` }
-      ]
-    },
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          mainPrompt: { type: Type.STRING, description: "The full descriptive prompt for the scene." },
-          subject: { type: Type.STRING },
-          style: { type: Type.STRING },
-          lighting: { type: Type.STRING },
-          colors: { type: Type.ARRAY, items: { type: Type.STRING } },
-          composition: { type: Type.STRING },
-          technicalSpecs: { type: Type.STRING }
-        },
-        required: ["mainPrompt", "subject", "style", "lighting", "colors", "composition", "technicalSpecs"]
-      }
-    }
-  });
+  const systemInstruction = `You are a professional AI Prompt Engineer and Commercial Photographer. 
+Analyze the uploaded image to extract its artistic style, lighting, and composition. 
+Describe a high-end commercial photography setting where the product '${productName || 'a product'}' can be naturally placed.
+The prompt must focus on the environment, textures, and lighting.`;
 
   try {
-    return JSON.parse(response.text || "{}") as PromptAnalysis;
-  } catch (error) {
-    throw new Error("Failed to parse analysis results.");
+    const response = await ai.models.generateContent({
+      model: "gemini-3-pro-preview",
+      contents: {
+        parts: [
+          { inlineData: { mimeType, data: base64Image } },
+          { text: `Analyze this scene. Create a detailed prompt for a ${productName || 'product'} photoshoot in this exact style and environment.` }
+        ]
+      },
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            mainPrompt: { type: Type.STRING, description: "Detailed prompt for the full scene." },
+            subject: { type: Type.STRING },
+            style: { type: Type.STRING },
+            lighting: { type: Type.STRING },
+            colors: { type: Type.ARRAY, items: { type: Type.STRING } },
+            composition: { type: Type.STRING },
+            technicalSpecs: { type: Type.STRING }
+          },
+          required: ["mainPrompt", "subject", "style", "lighting", "colors", "composition", "technicalSpecs"]
+        }
+      }
+    });
+
+    const cleanJson = sanitizeJson(response.text || "{}");
+    return JSON.parse(cleanJson) as PromptAnalysis;
+  } catch (error: any) {
+    console.error("Analysis API Error:", error);
+    if (error.message?.includes("entity was not found")) {
+      throw new Error("API Key configuration error. Please re-select your API key.");
+    }
+    throw new Error(error.message || "Failed to analyze image.");
   }
 };
 
@@ -89,31 +95,36 @@ export const generateImageFromPrompt = async (
       }
     });
     contentsParts.push({
-      text: `STRICT FIDELITY: Place the EXACT product from the reference image into this new scene: ${prompt}. 
-      Do not change the product's shape, color, branding, or texture. It must look 100% identical but naturally lit by the scene. 
-      Professional commercial photography, 8k, photorealistic.`
+      text: `TASK: Place the product from the reference image into this scene: ${prompt}.
+      MANDATORY: Preserve 100% of the product's identity, logos, and shape. 
+      Professional 8k commercial photography, realistic lighting integration, photorealistic.`
     });
   } else {
     contentsParts.push({
-      text: `Professional commercial photography of: ${prompt}. High-end lighting, 8k resolution, photorealistic.`
+      text: `Professional high-end commercial photography of: ${prompt}. Cinematic lighting, 8k resolution, photorealistic.`
     });
   }
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: { parts: contentsParts },
-    config: {
-      imageConfig: {
-        aspectRatio: aspectRatio,
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-image-preview',
+      contents: { parts: contentsParts },
+      config: {
+        imageConfig: {
+          aspectRatio: aspectRatio,
+          imageSize: "1K"
+        },
       },
-    },
-  });
+    });
 
-  for (const part of response.candidates[0].content.parts) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
+    throw new Error("No image data received from AI.");
+  } catch (error: any) {
+    console.error("Generation API Error:", error);
+    throw new Error(error.message || "Image generation failed.");
   }
-  
-  throw new Error("No image was returned.");
 };
